@@ -1,7 +1,7 @@
 [
     {
         "ParameterKey": "InitialS3BucketName",
-        "ParameterValue": "xiaodc-bootstrap-bucket"
+        "ParameterValue": "Yourname-bootstrap-bucket"
     }, 
     {
         "ParameterKey": "InitialTemplateName",
@@ -17,7 +17,7 @@
     },
     {
         "ParameterKey": "ToolInstallS3Bucket",
-        "ParameterValue": "xiaodc-lambda-zip-bucket"
+        "ParameterValue": "Yourname-lambda-zip-bucket"
     },    
     {
         "ParameterKey": "CreateAccountLambdaZipFileName",
@@ -29,7 +29,7 @@
     },
     {
         "ParameterKey": "SAMLMetadataS3BucketName",
-        "ParameterValue": "xiaodc-saml-bucket"
+        "ParameterValue": "Yourname-saml-bucket"
     },
     {
         "ParameterKey": "ChildAccountDefaultRole",
