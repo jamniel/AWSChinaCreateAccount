@@ -1,0 +1,400 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: These templates create an account creation toolkit including two lambda functions, step functions, an S3 bucket that host SAML metadata, an S3 bucket that host bootstrap template running in member account, and an DynamoDB table that records account inventory.
+
+Parameters:
+  InitialS3BucketName:
+    Type: String
+    Description: Name of S3 bucket that hosts account creation materials such as initial cloudformation templates, etc.
+  InitialTemplateName:
+    Type: String
+    Description: Bootstrap template name.
+    Default: 'AccountInitial.yml'
+  CreateAccountLambdaName:
+    Type: String
+    Description: Lambda function name that initialize account creation
+    Default: 'CreateAccountLambda' 
+  DeployAccountLambdaName:
+    Type: String
+    Description: Lambda function name that deploy bootstrap CFN in new account
+    Default: 'DeployAccountLambda' 
+  ToolInstallS3Bucket:
+    Type: String
+    Description: Lambda Zip file storage s3 bucket
+  CreateAccountLambdaZipFileName:
+    Type: String
+    Description: Full name of Create Account Lambda Zip file name (with .zip) in s3 bucket.
+    Default: 'lambda_create_account.zip' 
+  DeployAccountLambdaZipFileName:
+    Type: String
+    Description: Full name of Deploy Account Lambda Zip file name (with .zip) in s3 bucket. 
+    Default: 'lambda_deploy_account.zip'      
+  SAMLMetadataS3BucketName:
+    Type: String
+    Description: Name of S3 bucket that host SAML Federation Metadata file.
+  ChildAccountDefaultRole:
+    Type: String
+    Description: The default role in child account when created from master account.
+    Default: 'OrganizationAccountAccessRole'
+  AccessToBilling:
+    Type: String
+    Description: If set to ALLOW , the new account enables IAM users to access account billing information if they have the required permissions. If set to DENY , only the root user of the new account can access account billing information.
+    Default: 'DENY'
+    AllowedValues: ['ALLOW', 'DENY']
+  CloudFormationStackName:
+    Type: String
+    Description: Initial CloudFormation Stack name in child accounts.
+    Default: 'account-initialization' 
+  CloudFormationStackRegion:
+    Type: String
+    Description: Execution region of initial CloudFormation stack.
+    Default: 'cn-north-1'
+  
+
+Resources:
+# Create S3 buckets and policy
+  LandingZoneInitialS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Ref InitialS3BucketName
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      VersioningConfiguration: 
+        Status: Enabled
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  SAMLMetadataS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      BucketName: !Ref SAMLMetadataS3BucketName
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+      VersioningConfiguration: 
+        Status: Enabled
+      BucketEncryption: 
+        ServerSideEncryptionConfiguration: 
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  SAMLMetadataS3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket:
+        Ref: SAMLMetadataS3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: "SamlMetadataAccessPolicy"
+        Statement:
+          - Sid: 'RestrictAccountID'
+            Action:
+              - 's3:GetObject'
+            Effect: Allow
+            Resource:
+              'Fn::Join':
+                - ''
+                - - 'arn:aws-cn:s3:::'
+                  - Ref: SAMLMetadataS3BucketName
+                  - /*
+            Principal: 
+              AWS: '*'
+            Condition:
+              StringEquals:
+                'aws:PrincipalAccount':
+                  - !Ref "AWS::AccountId"
+
+# Deploy Create Account lambda function
+  CreateAccountLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        'Fn::Join':
+          - ''
+          - - Ref: CreateAccountLambdaName
+            - 'ExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub '${CreateAccountLambdaName}-Policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws-cn:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${CreateAccountLambdaName}:*'
+              - Effect: Allow
+                Action:
+                  - organizations:ListRoots
+                  - organizations:TagResource
+                  - organizations:AttachPolicy
+                  - organizations:DescribeOrganizationalUnit
+                  - organizations:ListParents
+                  - organizations:ListOrganizationalUnitsForParent
+                  - organizations:CreateAccount
+                  - organizations:MoveAccount
+                  - organizations:DescribeCreateAccountStatus
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketPolicyStatus
+                  - s3:PutBucketPolicy
+                  - s3:GetBucketPolicy
+                Resource: !Sub 'arn:aws-cn:s3:::${SAMLMetadataS3BucketName}'
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !Sub 'arn:aws-cn:dynamodb:${AWS::Region}:${AWS::AccountId}:table/lz_account_inventory'
+
+  CreateAccountLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Ref CreateAccountLambdaName
+      Description: Lambda function name that initialize account creation
+      Handler: !Join
+        - ""
+        - - !Select
+              - "0"
+              - !Split
+                  - "."
+                  - !Ref CreateAccountLambdaZipFileName
+          - ".lambda_handler"
+      Role: !GetAtt CreateAccountLambdaExecutionRole.Arn
+      Runtime: python3.8
+      Timeout: 300
+      Environment:
+        Variables:
+          access_to_billing: !Ref AccessToBilling
+          account_role: !Ref ChildAccountDefaultRole
+          metadata_bucket_name: !Ref SAMLMetadataS3BucketName
+      Code:
+        S3Bucket: !Ref ToolInstallS3Bucket
+        S3Key: !Ref CreateAccountLambdaZipFileName
+      MemorySize: 128
+
+# Deploy Account lambda function
+  DeployAccountLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        'Fn::Join':
+          - ''
+          - - Ref: DeployAccountLambdaName
+            - 'ExecutionRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub '${DeployAccountLambdaName}-Policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws-cn:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${DeployAccountLambdaName}:*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - sts:AssumeRole
+                Resource: 
+                  - !Sub 'arn:aws-cn:iam::*:role/${ChildAccountDefaultRole}'
+                  - !Sub 'arn:aws-cn:s3:::${InitialS3BucketName}/${InitialTemplateName}'
+
+  DeployAccountLambda:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Ref DeployAccountLambdaName
+      Description: Lambda function name that deploy bootstrap CFN into new account
+      Handler: !Join
+        - ""
+        - - !Select
+              - "0"
+              - !Split
+                  - "."
+                  - !Ref DeployAccountLambdaZipFileName
+          - ".lambda_handler"
+      Role: !GetAtt DeployAccountLambdaExecutionRole.Arn
+      Runtime: python3.8
+      Timeout: 300
+      Environment:
+        Variables:
+          account_role: !Ref ChildAccountDefaultRole
+          bucket_name: !Ref InitialS3BucketName
+          metadata_bucket_name: !Ref SAMLMetadataS3BucketName
+          stack_name: !Ref CloudFormationStackName
+          stack_region: !Ref CloudFormationStackRegion
+          template_file: !Ref InitialTemplateName
+      Code:
+        S3Bucket: !Ref ToolInstallS3Bucket
+        S3Key: !Ref DeployAccountLambdaZipFileName
+      MemorySize: 128
+
+  #Create Step Function State Machine
+  StepMachineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AccountInitialStateMachineExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: AccountInitialStateMachineExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: 
+                  - !GetAtt CreateAccountLambda.Arn
+                  - !GetAtt DeployAccountLambda.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+  AccountInitialStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: AccountInitialStateMachine
+      StateMachineType: STANDARD
+      DefinitionString: !Sub |
+        {
+            "Comment": "Create and initialize an account",
+            "StartAt": "createAccount",
+            "States": {
+              "createAccount": {
+                "Type": "Task",
+                "Resource": "${CreateAccountLambda.Arn}",
+                "ResultSelector": {
+                  "account_id.$": "$.account_id",
+                  "ou_name.$": "$.ou_name"
+                },
+                "ResultPath": "$.output",
+                "Next": "wait",
+                "Retry": [ 
+                  {
+                  "ErrorEquals": [ "States.TaskFailed" ],
+                  "IntervalSeconds": 15,
+                  "MaxAttempts": 5,
+                  "BackoffRate": 2
+                  }
+                ],
+                "Catch": [ {
+                  "ErrorEquals": ["States.ALL"],
+                   "Next": "CreateAccountFailure"
+                } ]
+              },    
+              "wait": {
+                "Type": "Wait",
+                "Seconds": 60,
+                "Next": "deployAccount"
+              },
+              "deployAccount": {
+                "Type": "Task",
+                "Resource": "${DeployAccountLambda.Arn}",
+                "End": true,
+                "Retry": [ 
+                  {
+                  "ErrorEquals": [ "States.TaskFailed" ],
+                  "IntervalSeconds": 60,
+                  "MaxAttempts": 15,
+                  "BackoffRate": 2
+                  }
+                ],
+                "Catch": [ 
+                  {
+                "ErrorEquals": [ "States.ALL" ],
+                "Next": "DeployAccountFailure"
+                  }
+                ]
+              },
+              "CreateAccountFailure": {
+                "Type": "Pass",
+                "Result": "Failed to create account.",
+                "End": true
+              },
+              "DeployAccountFailure": {
+                "Type": "Pass",
+                "Result": "Failed to deploy account.",
+                "End": true
+              }
+            }
+          }      
+      RoleArn: !GetAtt StepMachineExecutionRole.Arn
+      LoggingConfiguration:
+        Destinations: 
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StateMachineLogGroup.Arn
+        IncludeExecutionData: True
+        Level: ALL
+  
+  StateMachineLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '/aws/vendedlogs/states/AccountInitialStateMachine'
+      RetentionInDays: 14
+
+  # Create DDB table as accounts inventory
+  AccountInventoryDDBTable: 
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "account_name"
+          AttributeType: "S" 
+      KeySchema: 
+        - 
+          AttributeName: "account_name"
+          KeyType: "HASH"
+      ProvisionedThroughput: 
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TableName: "lz_account_inventory"
+      PointInTimeRecoverySpecification: 
+        PointInTimeRecoveryEnabled: true
+      BillingMode: PROVISIONED
+      SSESpecification: 
+        SSEEnabled: true
+

@@ -1,0 +1,50 @@
+[
+    {
+        "ParameterKey": "InitialS3BucketName",
+        "ParameterValue": "xiaodc-bootstrap-bucket"
+    }, 
+    {
+        "ParameterKey": "InitialTemplateName",
+        "ParameterValue": "AccountInitial.yml"
+    },
+    {
+        "ParameterKey": "CreateAccountLambdaName",
+        "ParameterValue": "CreateAccountLambda"
+    },
+    {
+        "ParameterKey": "DeployAccountLambdaName",
+        "ParameterValue": "DeployAccountLambda"
+    },
+    {
+        "ParameterKey": "ToolInstallS3Bucket",
+        "ParameterValue": "xiaodc-lambda-zip-bucket"
+    },    
+    {
+        "ParameterKey": "CreateAccountLambdaZipFileName",
+        "ParameterValue": "lambda_create_account.zip"
+    },
+    {
+        "ParameterKey": "DeployAccountLambdaZipFileName",
+        "ParameterValue": "lambda_deploy_account.zip"
+    },
+    {
+        "ParameterKey": "SAMLMetadataS3BucketName",
+        "ParameterValue": "xiaodc-saml-bucket"
+    },
+    {
+        "ParameterKey": "ChildAccountDefaultRole",
+        "ParameterValue": "OrganizationAccountAccessRole"
+    },
+    {
+        "ParameterKey": "AccessToBilling",
+        "ParameterValue": "DENY"
+    },
+    {
+        "ParameterKey": "CloudFormationStackName",
+        "ParameterValue": "account-initialization"
+    },
+    {
+        "ParameterKey": "CloudFormationStackRegion",
+        "ParameterValue": "cn-north-1"
+    }
+]
