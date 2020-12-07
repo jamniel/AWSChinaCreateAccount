@@ -10,7 +10,7 @@ Parameters:
     Type: String
     NoEcho: True
     MinLength: 1
-    Description: Password for the Admin user
+    Description: Password for the Admin user, Please change to your own password.
     Default: "ChangeToYourOwnP@ssw0rd"
 
 Resources:
